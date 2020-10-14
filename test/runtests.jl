@@ -56,7 +56,7 @@ using GeometryBasics: attributes
         end
 
     end
-   
+
     @testset "polygon with metadata" begin
         polys = [Polygon(rand(Point{2, Float32}, 20)) for i in 1:10]
         pnames = [randstring(4) for i in 1:10]
@@ -68,7 +68,7 @@ using GeometryBasics: attributes
         multipoly = MultiPolygonMeta(polys, name = pnames, value = numbers, category = bin)
         @test multipoly isa AbstractVector
         @test poly isa GeometryBasics.AbstractPolygon
-        
+
         @test GeometryBasics.getcolumn(poly, :name) == pnames[1]
         @test GeometryBasics.MetaFree(PolygonMeta) == Polygon
 
@@ -92,7 +92,7 @@ using GeometryBasics: attributes
         @test metafree(pm) === p
         @test propertynames(pm) == (:position, :a, :b)
     end
-    
+
     @testset "MultiPoint with metadata" begin
         p = collect(Point{2, Float64}(x, x+1) for x in 1:5)
         @test p isa AbstractVector
@@ -129,6 +129,105 @@ using GeometryBasics: attributes
        @test metafree(m_meta) === m
        @test propertynames(m_meta) == (:mesh, :boundingbox)
    end
+end
+
+@testset "embedding MetaT" begin
+    @testset "MetaT{Polygon}" begin
+        polys = [Polygon(rand(Point{2, Float32}, 20)) for i in 1:10]
+        multipol = MultiPolygon(polys)
+        pnames = [randstring(4) for i in 1:10]
+        numbers = LinRange(0.0, 1.0, 10)
+        bin = rand(Bool, 10)
+        # create a polygon
+        poly = MetaT(polys[1], name = pnames[1], value = numbers[1], category = bin[1])
+        # create a MultiPolygon with the right type & meta information!
+        multipoly = MetaT(multipol, name = pnames, value = numbers, category = bin)
+        @test multipoly isa MetaT
+        @test poly isa MetaT
+
+        @test GeometryBasics.getcolumn(poly, :name) == pnames[1]
+        @test GeometryBasics.getcolumn(multipoly, :name) == pnames
+
+        meta_p = MetaT(polys[1], boundingbox=Rect(0, 0, 2, 2))
+        @test meta_p.boundingbox === Rect(0, 0, 2, 2)
+        @test GeometryBasics.metafree(meta_p) == polys[1]
+        @test GeometryBasics.metafree(poly) == polys[1]
+        @test GeometryBasics.metafree(multipoly) == multipol
+        @test GeometryBasics.meta(meta_p) == (boundingbox = GeometryBasics.HyperRectangle{2,Int64}([0, 0], [2, 2]),)
+        @test GeometryBasics.meta(poly) == (name = pnames[1], value = 0.0, category = bin[1])
+        @test GeometryBasics.meta(multipoly) == (name = pnames, value = numbers, category = bin)
+    end
+
+    @testset "MetaT{Point}" begin
+        p = Point(1.1, 2.2)
+        @test p isa AbstractVector{Float64}
+        pm = MetaT(Point(1.1, 2.2); a=1, b=2)
+        p1 = Point(2.2, 3.6)
+        p2 = [p, p1]
+        @test coordinates(p2) == p2
+        @test pm.meta === (a=1, b=2)
+        @test pm.main === p
+        @test propertynames(pm) == (:main, :a, :b)
+        @test GeometryBasics.metafree(pm) == p
+        @test GeometryBasics.meta(pm) == (a = 1, b = 2)
+    end
+
+    @testset "MetaT{MultiPoint}" begin
+        p = collect(Point{2, Float64}(x, x+1) for x in 1:5)
+        @test p isa AbstractVector
+        mpm = MetaT(MultiPoint(p); a=1, b=2)
+        @test coordinates(mpm.main) == Point{2, Float64}[(x, x+1) for x in 1:5]
+        @test mpm.meta === (a=1, b=2)
+        @test mpm.main == p
+        @test propertynames(mpm) == (:main, :a, :b)
+        @test GeometryBasics.metafree(mpm) == p
+        @test GeometryBasics.meta(mpm) == (a = 1, b = 2)
+    end
+
+    @testset "MetaT{LineString}" begin
+        linestring = MetaT(LineString(Point{2, Int}[(10, 10), (20, 20), (10, 40)]), a = 1, b = 2)
+        @test linestring isa MetaT
+        @test linestring.meta === (a = 1, b = 2)
+        @test propertynames(linestring) == (:main, :a, :b)
+        @test GeometryBasics.metafree(linestring) == LineString(Point{2, Int}[(10, 10), (20, 20), (10, 40)])
+        @test GeometryBasics.meta(linestring) == (a = 1, b = 2)
+    end
+
+    @testset "MetaT{MultiLineString}" begin
+        linestring1 = LineString(Point{2, Int}[(10, 10), (20, 20), (10, 40)])
+        linestring2 = LineString(Point{2, Int}[(40, 40), (30, 30), (40, 20), (30, 10)])
+        multilinestring = MultiLineString([linestring1, linestring2])
+        multilinestringmeta = MetaT(MultiLineString([linestring1, linestring2]); boundingbox = Rect(1.0, 1.0, 2.0, 2.0))
+        @test multilinestringmeta isa MetaT
+        @test multilinestringmeta.meta === (boundingbox = Rect(1.0, 1.0, 2.0, 2.0),)
+        @test multilinestringmeta.main == multilinestring
+        @test propertynames(multilinestringmeta) == (:main, :boundingbox)
+        @test GeometryBasics.metafree(multilinestringmeta) == multilinestring
+        @test GeometryBasics.meta(multilinestringmeta) == (boundingbox = GeometryBasics.HyperRectangle{2,Float64}([1.0, 1.0], [2.0, 2.0]),)
+    end
+
+    #=
+    So mesh works differently for MetaT
+    since `MetaT{Point}` not subtyped to `AbstractPoint`
+    =#
+
+   @testset "MetaT{Mesh}" begin
+        @testset "per vertex attributes" begin
+            points = rand(Point{3, Float64}, 8)
+            tfaces = TetrahedronFace{Int}[(1, 2, 3, 4), (5, 6, 7, 8)]
+            normals = rand(SVector{3, Float64}, 8)
+            stress = LinRange(0, 1, 8)
+            mesh_nometa = Mesh(points, tfaces)
+            mesh = MetaT(mesh_nometa, normals = normals, stress = stress)
+
+            @test hasproperty(mesh, :stress)
+            @test hasproperty(mesh, :normals)
+            @test mesh.stress == stress
+            @test mesh.normals == normals
+            @test GeometryBasics.faces(mesh.main) == tfaces
+            @test propertynames(mesh) == (:main, :normals, :stress)
+        end
+    end
 end
 
 @testset "view" begin
@@ -371,6 +470,23 @@ end
     points = decompose(Point2f0, Circle(Point2f0(0), 1))
     m = GeometryBasics.mesh(points)
     @test coordinates(m) === points
+
+    linestring = LineString(Point{2, Int}[(10, 10), (20, 20), (10, 40)])
+    pts = Point{2, Int}[(10, 10), (20, 20), (10, 40)]
+    linestring = LineString(pts)
+    pts_decomp = decompose(Point{2, Int}, linestring)
+    @test pts === pts_decomp
+
+    pts_ext = Point{2, Int}[(5, 1), (3, 3), (4, 8), (1, 2), (5, 1)]
+    ls_ext = LineString(pts_ext)
+    pts_int1 = Point{2, Int}[(2, 2), (3, 8),(5, 6), (3, 4), (2, 2)]
+    ls_int1 = LineString(pts_int1)
+    pts_int2 = Point{2, Int}[(3, 2), (4, 5),(6, 1), (1, 4), (3, 2)]
+    ls_int2 =  LineString(pts_int2)
+    poly_ext = Polygon(ls_ext)
+    poly_ext_int = Polygon(ls_ext, [ls_int1, ls_int2])
+    @test decompose(Point{2, Int}, poly_ext) == pts_ext
+    @test decompose(Point{2, Int}, poly_ext_int) == [pts_ext..., pts_int1..., pts_int2...]
 end
 
 @testset "convert mesh + meta" begin
@@ -503,6 +619,34 @@ end
     @test <=(x, x1)
     @test !>(x, x1)
     @test <(x, x1)
+end
+
+@testset "MetaT and heterogeneous data" begin
+    ls = [LineString([Point(i, (i+1)^2/6), Point(i*0.86,i+5), Point(i/3, i/7)]) for i in 1:10]
+    mls = MultiLineString([LineString([Point(i+1, (i)^2/6), Point(i*0.75,i+8), Point(i/2.5, i/6.79)]) for i in 5:10])
+    poly = Polygon(Point{2, Int}[(40, 40), (20, 45), (45, 30), (40, 40)])
+    geom = [ls..., mls, poly]
+    prop = Any[(country_states = "India$(i)", rainfall = (i*9)/2) for i in 1:11]
+    push!(prop, (country_states = 12, rainfall = 1000))   # a pinch of heterogeneity
+
+    feat = [MetaT(i, j) for (i,j) = zip(geom, prop)]
+    sa = meta_table(feat)
+
+    @test nameof(eltype(feat)) == :MetaT
+    @test eltype(sa) === MetaT{Any,(:country_states, :rainfall),Tuple{Any,Float64}}
+    @test propertynames(sa) === (:main, :country_states, :rainfall)
+    @test getproperty(sa, :country_states) isa Array{Any}
+    @test getproperty(sa, :main) == geom
+
+    @test GeometryBasics.getnamestypes(typeof(feat[1])) ==
+    (LineString{2,Float64,Point{2,Float64},Base.ReinterpretArray{GeometryBasics.Ngon{2,Float64,2,Point{2,Float64}},1,Tuple{Point{2,Float64},Point{2,Float64}},TupleView{Tuple{Point{2,Float64},Point{2,Float64}},2,1,Array{Point{2,Float64},1}}}},
+    (:country_states, :rainfall), Tuple{String,Float64})
+
+
+    @test StructArrays.createinstance(typeof(feat[1]), LineString([Point(1, (2)^2/6), Point(1*0.86,6), Point(1/3, 1/7)]), "Mumbai", 100) isa typeof(feat[1])
+
+    @test Base.getindex(feat[1], 1) isa Line
+    @test Base.size(feat[1]) == (2,)
 end
 
 @testset "Tests from GeometryTypes" begin
